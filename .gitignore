@@ -1,0 +1,14 @@
+# Build output
+/build/
+
+# Prebuilt third-party binaries (MSYS2 UCRT64 - see README for how to get them)
+*.dll
+*.dll.a
+/lib/*.a
+
+# Logs
+*.log
+
+# IDE / editor
+.vscode/
+.idea/

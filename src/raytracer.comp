@@ -1,0 +1,584 @@
+#version 460 core
+
+#extension GL_ARB_bindless_texture : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba32f, binding = 0) uniform image2D outputImg;
+
+uniform vec3 camPos;
+uniform vec3 camFront;
+uniform vec3 camRight;
+uniform vec3 camUp;
+uniform float vfov;
+
+uniform int samplesPerPixel;
+uniform int maxDepth;
+uniform float time;
+uniform int accumFrame;
+
+///////////////////////////////////////////////////
+// Constants
+
+const int BVH_STACK_SIZE = 32;
+
+const float PI = 3.14159265358979323846;
+
+// BVH Type
+const int NODE = 0;
+const int SPHERE = 1;
+const int TRIANGLE = 2;
+const int QUAD = 3;
+const int LEAF = 4;
+
+// Texture Type
+const int SOLID = 0;
+const int IMAGE = 1;
+
+// Material Type
+const int LAMBERTIAN = 0;
+const int METAL = 1;
+const int DIELECTRIC = 2;
+const int DIFFUSE_LIGHT = 3;
+
+/////////////////////////////////////////////////// 
+//Helper Functions
+
+uint rng_state;
+
+uint pcg_hash()
+{
+    rng_state = rng_state * 747796405u + 2891336453u;
+    uint word = ((rng_state >> ((rng_state >> 28u) + 4u)) ^ rng_state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float rand_float()
+{
+    return float(pcg_hash()) / 4294967295.0; // [0,1)
+}
+
+vec3 random_in_unit_sphere()
+{
+    while (true)
+    {
+        vec3 p = vec3(rand_float(), rand_float(), rand_float()) * 2.0 - 1.0;
+        float len = dot(p, p);
+        if (len < 1.0)
+        {
+            return p;
+        }
+    }
+}
+
+vec3 random_unit_vector()
+{
+    return normalize(random_in_unit_sphere());
+}
+
+bool near_zero(vec3 v)
+{
+    float epsilon = 1e-30;
+    return (abs(v.x) < epsilon) && (abs(v.y) < epsilon) && (abs(v.z) < epsilon);
+}
+
+float reflectance(float cos, float ref_idx)
+{
+    float r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
+    r0 = r0 * r0;
+    return r0 + (1.0 - r0) * pow((1.0 - cos), 5.0);
+}
+
+vec2 get_sphere_uv(vec3 p)
+{
+    float theta = acos(-p.y);
+    float phi = atan(-p.z, p.x) + PI;
+    return vec2(phi / (2.0 * PI), theta / PI);
+}
+
+/////////////////////////////////////////////////// 
+// Structs
+
+struct Material
+{
+    int texture_index;
+    float fuzz;
+    float ref_idx;
+    int type;
+    float emission_strength;
+    float _pad0;
+    float _pad1;
+    float _pad2;
+};
+
+layout(std430, binding = 1) buffer MaterialBuffer
+{
+    Material materials[];
+};
+
+struct Sphere
+{
+    vec3 center;
+    float radius;
+    int material_idx;
+    float _pad0; 
+    float _pad1; 
+    float _pad2;
+};
+
+layout(std430, binding = 2) buffer SphereBuffer
+{
+    Sphere spheres[];
+};
+
+struct Triangle
+{
+    vec3 v0;
+    float _pad0;
+    vec3 v1;
+    float _pad1;
+    vec3 v2;
+    int material_idx;
+    vec3 normal;   // flat face normal, used for the front/back test
+    float _pad2;
+    vec3 n0;
+    float _pad3;
+    vec3 n1;
+    float _pad4;
+    vec3 n2;
+    float _pad5;
+    vec2 uv0;
+    vec2 uv1;
+    vec2 uv2;
+    vec2 _pad6;
+};
+
+layout(std430, binding = 3) buffer TriangleBuffer
+{
+    Triangle triangles[];
+};
+
+struct Quad
+{
+    vec3 Q;      
+    float D;
+    vec3 u;      
+    int material_idx;
+    vec3 v;      
+    float _pad0;
+    vec3 normal; 
+    float _pad1;
+    vec3 w;      
+    float _pad2;
+};
+
+layout(std430, binding = 4) buffer QuadBuffer
+{
+    Quad quads[];
+};
+
+struct BVHNode
+{
+    vec3 aabb_min;
+    int prim_type;
+    vec3 aabb_max;
+    int left;
+    int right;
+    int axis;
+    int count;
+    float _pad;
+};
+
+layout(std430, binding = 5) buffer BVHBuffer
+{
+    BVHNode bvh_nodes[];
+};
+
+struct BVHPrimRef
+{
+    int type;
+    int index;
+};
+
+layout(std430, binding = 7) buffer BVHPrimRefBuffer
+{
+    BVHPrimRef bvh_prim_refs[];
+};
+
+struct Texture
+{
+    vec3 color;
+    int type;
+    sampler2D handle;
+    float _pad0;
+};
+
+layout(std430, binding = 6) buffer TextureBuffer
+{
+    Texture textures[];
+};
+
+vec3 texture_value(int idx, vec2 uv)
+{
+    Texture t = textures[idx];
+    if (t.type == SOLID)
+    {
+        return t.color;
+    }
+    return texture(t.handle, uv).rgb;
+}
+
+vec3 emitted(Material mat, vec2 uv)
+{
+    if (mat.type != DIFFUSE_LIGHT)
+    {
+        return vec3(0.0);
+    }
+    return mat.emission_strength * texture_value(mat.texture_index, uv);
+}
+
+struct Ray
+{
+    vec3 origin;
+    vec3 direction;
+};
+
+struct HitRecord
+{
+    vec3 p;
+    vec3 normal;
+    float t;
+    bool front_face;
+    int material_idx;
+    vec2 uv;
+
+};
+
+/////////////////////////////////////////////////// 
+// Hit Tests
+
+vec3 ray_at(Ray r, float t)
+{
+    return r.origin + t * r.direction;
+}
+
+bool hit_sphere(Sphere s, Ray r, float t_min, float t_max, out HitRecord rec)
+{
+    // Solve quadratic equation for sphere
+    vec3 oc = s.center - r.origin;
+    float a = dot(r.direction, r.direction);
+    float h = dot(r.direction, oc);
+    float c = dot(oc, oc) - s.radius * s.radius;
+    float discriminant = h * h - a * c;
+
+    // Discriminant < 0 -> No real solutions
+    if (discriminant < 0.0) 
+    {
+        return false;
+    } 
+
+    float sqrtd = sqrt(discriminant);
+
+    // Find the nearest root that lies in the acceptable range [t_min, t_max]
+    float root = (h - sqrtd) / a;
+    if (root <= t_min || t_max <= root)
+    {
+        root = (h + sqrtd) / a;
+        if (root <= t_min || t_max <= root)
+        {
+            return false;
+        }
+    }
+
+    rec.t = root;
+    rec.p = ray_at(r, rec.t);
+    vec3 outward_normal = (rec.p - s.center) / s.radius;
+    rec.front_face = dot(r.direction, outward_normal) < 0.0;
+    rec.uv = get_sphere_uv(outward_normal);
+    rec.normal = rec.front_face ? outward_normal : -outward_normal;
+    rec.material_idx = s.material_idx;
+
+    return true;
+}
+
+bool hit_triangle(Triangle tri, Ray r, float t_min, float t_max, out HitRecord rec)
+{
+    vec3 e1 = tri.v1 - tri.v0;
+    vec3 e2 = tri.v2 - tri.v0;
+    vec3 h = cross(r.direction, e2);
+    float det = dot(e1, h);
+
+    // Det ≈ 0 -> Cramer's rule has no solution
+    if (abs(det) < 1e-8)
+    {
+        return false;
+    }
+
+    // Cramer's rule solutions
+    float invDet = 1.0 / det;
+    vec3 s = r.origin - tri.v0;
+    float u = invDet * dot(s, h);
+    if (u < 0.0 || u > 1.0)
+    {
+        return false;
+    }
+
+    vec3 q = cross(s, e1);
+    float v = invDet * dot(r.direction, q);
+    if (v < 0.0 || u + v > 1.0)
+    {
+        return false;
+    }
+
+    float t = invDet * dot(e2, q);
+    if (t <= t_min || t >= t_max)
+    {
+        return false;
+    }
+
+    rec.t = t;
+    rec.p = ray_at(r, t);
+    rec.front_face = dot(r.direction, tri.normal) < 0.0;
+
+    vec3 smooth_normal = normalize((1.0 - u - v) * tri.n0 + u * tri.n1 + v * tri.n2);
+    rec.normal = rec.front_face ? smooth_normal : -smooth_normal;
+
+    rec.material_idx = tri.material_idx;
+    rec.uv = (1.0 - u - v) * tri.uv0 + u * tri.uv1 + v * tri.uv2;
+
+    return true;
+}
+
+bool hit_quad(Quad quad, Ray r, float t_min, float t_max, out HitRecord rec)
+{
+    float denom = dot(quad.normal, r.direction);
+
+    // Denom = 0 -> Ray perpendicular to normal -> Parallel to plane
+    if (abs(denom) < 1e-8)
+    {
+        return false;
+    }
+
+    // Rearrange plane equation with ray to find t
+    float t = (quad.D - dot(quad.normal, r.origin)) / denom;
+    if (t <= t_min || t >= t_max) return false;
+
+    // Express intersection in terms of spanned plane
+    vec3 intersection = ray_at(r, t);
+    vec3 planar_hitpt = intersection - quad.Q;
+    float alpha = dot(quad.w, cross(planar_hitpt, quad.v));
+    float beta  = dot(quad.w, cross(quad.u, planar_hitpt));
+
+    // Bound check
+    if (alpha < 0.0 || alpha > 1.0 || beta < 0.0 || beta > 1.0) return false;
+
+    rec.t = t;
+    rec.p = intersection;
+    rec.front_face = denom < 0.0;
+    rec.normal = rec.front_face ? quad.normal : -quad.normal;
+    rec.material_idx = quad.material_idx;
+    rec.uv = vec2(alpha, beta);
+
+    return true;
+}
+
+bool hit_aabb(vec3 bmin, vec3 bmax, Ray r, vec3 inv_dir, float t_min, float t_max)
+{
+    for (int axis = 0; axis < 3; ++axis) {
+        float t0 = (bmin[axis] - r.origin[axis]) * inv_dir[axis];
+        float t1 = (bmax[axis] - r.origin[axis]) * inv_dir[axis];
+
+        if (inv_dir[axis] < 0.0) {
+            float tmp = t0;
+            t0 = t1;
+            t1 = tmp;
+        }
+
+        t_min = max(t_min, t0);
+        t_max = min(t_max, t1);
+
+        if (t_max <= t_min) {
+            return false;
+        }
+
+    }
+    return true;
+}
+
+bool hit_bvh(Ray r, float t_min, float t_max, out HitRecord rec)
+{
+    int stack[BVH_STACK_SIZE];
+    int idx = 0;
+    stack[idx++] = 0;
+
+    bool hit_anything = false;
+    float closest_so_far = t_max;
+    vec3 inv_dir = 1.0 / r.direction;
+
+    while (idx > 0) {
+        BVHNode node = bvh_nodes[stack[--idx]];
+
+        if (!hit_aabb(node.aabb_min, node.aabb_max, r, inv_dir, t_min, closest_so_far)) {
+            continue;
+        }
+
+        if (node.prim_type == LEAF) {
+            for (int i = 0; i < node.count; ++i) {
+                BVHPrimRef ref = bvh_prim_refs[node.right + i];
+                HitRecord tmp;
+                bool hit = false;
+
+                if (ref.type == SPHERE) {
+                    hit = hit_sphere(spheres[ref.index], r, t_min, closest_so_far, tmp);
+                } else if (ref.type == TRIANGLE) {
+                    hit = hit_triangle(triangles[ref.index], r, t_min, closest_so_far, tmp);
+                } else if (ref.type == QUAD) {
+                    hit = hit_quad(quads[ref.index], r, t_min, closest_so_far, tmp);
+                }
+
+                if (hit) {
+                    hit_anything = true;
+                    closest_so_far = tmp.t;
+                    rec = tmp;
+                }
+            }
+        }
+        else if (idx < BVH_STACK_SIZE - 2) {
+            if (inv_dir[node.axis] < 0.0) {
+                stack[idx++] = node.left;
+                stack[idx++] = node.right;
+            } else {
+                stack[idx++] = node.right;
+                stack[idx++] = node.left;
+            }
+        }
+    }
+    return hit_anything;
+}
+
+///////////////////////////////////////////////////
+
+bool scatter(Material mat, Ray r_in, HitRecord rec, out vec3 attenuation, out Ray scattered)
+{
+    if (mat.type == LAMBERTIAN)
+    {
+        vec3 scatter_direction = rec.normal + random_unit_vector();
+        if (near_zero(scatter_direction))
+        {
+            scatter_direction = rec.normal;
+        }
+
+        scattered = Ray(rec.p, scatter_direction);
+        attenuation = texture_value(mat.texture_index, rec.uv);
+        return true;
+    }
+    else if (mat.type == METAL)
+    {
+        vec3 scatter_direction = reflect(normalize(r_in.direction), rec.normal);
+        scatter_direction = normalize(scatter_direction) + (mat.fuzz * random_unit_vector());
+
+        scattered = Ray(rec.p, scatter_direction);
+        attenuation = texture_value(mat.texture_index, rec.uv);
+        return dot(scattered.direction, rec.normal) > 0.0;
+    }
+    else if (mat.type == DIELECTRIC)
+    {
+        attenuation = vec3(1.0);
+        float refraction_ratio = rec.front_face ? (1.0 / mat.ref_idx) : mat.ref_idx;
+
+        vec3 unit_direction = normalize(r_in.direction);
+        float cos_theta = min(dot(-unit_direction, rec.normal), 1.0);
+        float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+
+        bool cannot_refract = refraction_ratio * sin_theta > 1.0;
+        vec3 direction;
+
+        if (cannot_refract || reflectance(cos_theta, refraction_ratio) > rand_float())
+        {
+            direction = reflect(unit_direction, rec.normal);
+        } else {
+            direction = refract(unit_direction, rec.normal, refraction_ratio);
+        }
+
+        scattered = Ray(rec.p, direction);
+        return true;
+    }
+    else // DIFFUSE_LIGHT: emits via emitted(), does not bounce further
+    {
+        attenuation = vec3(0.0);
+        scattered = Ray(rec.p, rec.normal);
+        return false;
+    }
+}
+
+vec3 ray_color(Ray r)
+{
+    vec3 accumulated_attenuation = vec3(1.0);
+    vec3 accumulated_radiance = vec3(0.0);
+
+    for (int depth = 0; depth < maxDepth; depth++)
+    {
+        HitRecord closest_rec;
+        bool hit_anything = hit_bvh(r, 0.001, 1e30, closest_rec);
+
+        if (!hit_anything)
+        {
+            vec3 unit_direction = normalize(r.direction);
+            float a = 0.5 * (unit_direction.y + 1.0);
+            vec3 sky = (1.0 - a) * vec3(1.0, 1.0, 1.0) + a * vec3(0.5, 0.7, 1.0);
+            return accumulated_radiance + accumulated_attenuation * sky;
+        }
+
+        Material mat = materials[closest_rec.material_idx];
+
+        accumulated_radiance += accumulated_attenuation * emitted(mat, closest_rec.uv);
+
+        vec3 attenuation;
+        Ray scattered;
+
+        if (!scatter(mat, r, closest_rec, attenuation, scattered))
+            return accumulated_radiance; // Ray absorbed or hit a light: no further bounces
+
+        accumulated_attenuation *= attenuation;
+        r = scattered; // Bounce: next iteration traces the scattered ray
+    }
+
+    return accumulated_radiance; // Hit bounce limit, contributes no more light
+}
+
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imgSize = imageSize(outputImg);
+
+    if (pixel.x >= imgSize.x || pixel.y >= imgSize.y) return;
+
+    rng_state = uint(pixel.x) * 1973u + uint(pixel.y) * 9277u + floatBitsToUint(time) * 26699u + 1u;
+
+    // Image Dimensions
+    float aspect = float(imgSize.x) / float(imgSize.y);
+    float theta = radians(vfov);
+    float viewport_height = 2.0 * tan(theta / 2.0);
+    float viewport_width = viewport_height * aspect;
+
+    vec3 horizontal = viewport_width * camRight;
+    vec3 vertical = viewport_height * camUp;
+    vec3 lower_left = camPos - horizontal / 2.0 - vertical / 2.0 + camFront;
+
+    vec3 color_combination = vec3(0.0f);
+    for (int samples = 0; samples < samplesPerPixel; ++samples) {
+        float u = (float(pixel.x) + rand_float()) / float(imgSize.x);
+        float v = (float(pixel.y) + rand_float()) / float(imgSize.y);
+
+        Ray r;
+        r.origin = camPos;
+        r.direction = lower_left + u * horizontal + v * vertical - camPos;
+
+        color_combination += ray_color(r);
+    }
+    vec3 final_color = color_combination / float(samplesPerPixel);
+
+    vec4 prev = imageLoad(outputImg, pixel);
+    vec4 blended = mix(prev, vec4(final_color, 1.0), 1.0 / float(accumFrame + 1));
+    imageStore(outputImg, pixel, blended);
+}
