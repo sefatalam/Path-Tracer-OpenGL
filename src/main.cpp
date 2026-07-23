@@ -120,58 +120,66 @@ int main() {
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    // Scene Builder
+    // Scene Builder — specular assessment scene: neutral gray ground, a row of metal spheres
+    // with increasing fuzz (roughness) plus one glass sphere, and three lights of different
+    // sizes (same emission strength) so highlight *softness* can be compared side by side.
+    // No skybox (see raytracer.comp) — background is flat black, so only these lights matter.
     std::vector<Texture> textures;
     std::vector<Material> materials;
     std::vector<Sphere> spheres;
     std::vector<Triangle> triangles;
     std::vector<Quad> quads;
 
-    textures.push_back(Texture::Solid(glm::vec3(0.8f, 0.8f, 0.0f)));
+    textures.push_back(Texture::Solid(glm::vec3(0.5f, 0.5f, 0.5f)));
     materials.push_back(Material::Lambertian((int)textures.size() - 1));
     int material_ground = materials.size() - 1;
 
-    textures.push_back(Texture::Solid(glm::vec3(0.1f, 0.2f, 0.5f)));
-    materials.push_back(Material::Lambertian((int)textures.size() - 1));
-    int material_center = materials.size() - 1;
+    textures.push_back(Texture::Solid(glm::vec3(0.8f, 0.8f, 0.85f)));
+    int silver_texture = (int)textures.size() - 1;
+
+    materials.push_back(Material::Metal(silver_texture, 0.0f));
+    int material_metal_0 = materials.size() - 1;
+    materials.push_back(Material::Metal(silver_texture, 0.1f));
+    int material_metal_1 = materials.size() - 1;
+    materials.push_back(Material::Metal(silver_texture, 0.2f));
+    int material_metal_2 = materials.size() - 1;
+    materials.push_back(Material::Metal(silver_texture, 0.35f));
+    int material_metal_3 = materials.size() - 1;
+    materials.push_back(Material::Metal(silver_texture, 0.5f));
+    int material_metal_4 = materials.size() - 1;
 
     materials.push_back(Material::Dielectric(1.5f));
-    int material_left = materials.size() - 1;
+    int material_glass = materials.size() - 1;
 
-    textures.push_back(Texture::Image("src/textures/earth.jpg"));
-    materials.push_back(Material::Metal((int)textures.size() - 1, 0.0f));
-    int material_right = materials.size() - 1;
-
-    textures.push_back(Texture::Solid(glm::vec3(0.2f, 0.8f, 0.3f)));
-    materials.push_back(Material::Lambertian((int)textures.size() - 1));
-    int material_triangle = materials.size() - 1;
-
-    textures.push_back(Texture::Image("src/textures/earth.jpg"));
-    materials.push_back(Material::Lambertian((int)textures.size() - 1));
-    int material_quad = materials.size() - 1;
-
-    // Lightbulb: a small emissive sphere. Strength > 1.0 is expected since the
-    // texture color alone (max 1.0 per channel) would just look like a bright
-    // diffuse surface, not an actual light source.
     textures.push_back(Texture::Solid(glm::vec3(1.0f, 1.0f, 1.0f)));
-    materials.push_back(Material::DiffuseLight((int)textures.size() - 1, 8.0f));
+    materials.push_back(Material::DiffuseLight((int)textures.size() - 1, 6.0f));
     int material_light = materials.size() - 1;
 
-    spheres.push_back(Sphere(glm::vec3( 0.0f, -100.5f, -1.0f), 100.0f, material_ground));
-    spheres.push_back(Sphere(glm::vec3( 0.0f,    0.0f, -1.0f),   0.5f, material_center));
-    spheres.push_back(Sphere(glm::vec3(-1.0f,    0.0f, -1.0f),   0.5f, material_left));
-    spheres.push_back(Sphere(glm::vec3( 1.0f,    0.0f, -1.0f),   0.5f, material_right));
-    spheres.push_back(Sphere(glm::vec3( 0.0f,    2.0f, -1.0f),   0.3f, material_light));
+    spheres.push_back(Sphere(glm::vec3(0.0f, -100.5f, -1.0f), 100.0f, material_ground));
 
-    triangles.push_back(Triangle(glm::vec3(1.7f, -0.2f, -1.0f),
-                                  glm::vec3(2.3f, -0.2f, -1.0f),
-                                  glm::vec3(2.0f,  0.6f, -1.0f),
-                                  material_triangle));
+    // Fuzz increases left to right: 0.0 (mirror) -> 0.5 (very rough), then glass at the end.
+    spheres.push_back(Sphere(glm::vec3(-1.875f, 0.0f, -1.0f), 0.5f, material_metal_0));
+    spheres.push_back(Sphere(glm::vec3(-1.125f, 0.0f, -1.0f), 0.5f, material_metal_1));
+    spheres.push_back(Sphere(glm::vec3(-0.375f, 0.0f, -1.0f), 0.5f, material_metal_2));
+    spheres.push_back(Sphere(glm::vec3( 0.375f, 0.0f, -1.0f), 0.5f, material_metal_3));
+    spheres.push_back(Sphere(glm::vec3( 1.125f, 0.0f, -1.0f), 0.5f, material_metal_4));
+    spheres.push_back(Sphere(glm::vec3( 1.875f, 0.0f, -1.0f), 0.5f, material_glass));
 
-    quads.push_back(Quad(glm::vec3(-2.5f, -0.5f, -1.3f),
-                          glm::vec3( 0.6f,  0.0f,  0.0f),
-                          glm::vec3( 0.0f,  0.6f,  0.0f),
-                          material_quad));
+    // Small, tight light -> sharp highlights.
+    quads.push_back(Quad(glm::vec3(-2.15f, 2.0f, -0.65f),
+                          glm::vec3( 0.3f,  0.0f,  0.0f),
+                          glm::vec3( 0.0f,  0.0f,  0.3f),
+                          material_light));
+    // Medium light -> moderately soft highlights.
+    quads.push_back(Quad(glm::vec3(-0.4f, 2.5f, -1.9f),
+                          glm::vec3( 0.8f, 0.0f,  0.0f),
+                          glm::vec3( 0.0f, 0.0f,  0.8f),
+                          material_light));
+    // Large, soft light -> broad highlights.
+    quads.push_back(Quad(glm::vec3(1.25f, 2.0f, -3.25f),
+                          glm::vec3(1.5f,  0.0f,  0.0f),
+                          glm::vec3(0.0f,  0.0f,  1.5f),
+                          material_light));
 
     // Loads models
 
