@@ -36,7 +36,7 @@ const unsigned int TEXTURE_WIDTH = 512;
 const unsigned int TEXTURE_HEIGHT = 512;
 
 const int samplesPerPixel = 2;
-const int maxDepth = 8;
+const int maxDepth = 5;
 
 // Camera
 Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
@@ -65,6 +65,7 @@ int main() {
     }
 
     glfwMakeContextCurrent(window);
+    glfwSwapInterval(1); // cap to vsync so the compute shader doesn't peg the GPU at 100% uncapped
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetCursorPosCallback(window, mouse_callback);
@@ -174,8 +175,8 @@ int main() {
 
     // Loads models
 
-    glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, -0.5f, -2.0f));
-    loadModel("src/models/sasha/source/Sasha.fbx", triangles, textures, materials, modelTransform, {"Outline"});
+    // glm::mat4 modelTransform = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, -0.5f, -2.0f));
+    // loadModel("src/models/sasha/source/Sasha.fbx", triangles, textures, materials, modelTransform, {"Outline"});
 
     auto refs = buildRefs(spheres, triangles, quads);
     BVHBuilder builder;
@@ -196,6 +197,19 @@ int main() {
                   << leafCount << " leaves, " << builder.primRefs.size() << " prim refs, "
                   << "avg leaf size " << (leafCount ? (double)leafPrimTotal / leafCount : 0.0)
                   << ", max leaf size " << maxLeafSize << "\n";
+    }
+
+    // Collect emissive spheres/quads for direct light sampling (NEE covers sphere + quad lights only)
+    std::vector<BVHPrimRef> lights;
+    for (int i = 0; i < (int)spheres.size(); ++i) {
+        if (materials[spheres[i].material_index].type == DIFFUSE_LIGHT) {
+            lights.push_back({ SPHERE, i });
+        }
+    }
+    for (int i = 0; i < (int)quads.size(); ++i) {
+        if (materials[quads[i].material_index].type == DIFFUSE_LIGHT) {
+            lights.push_back({ QUAD, i });
+        }
     }
 
     // Send Scene to GPU
@@ -248,6 +262,13 @@ int main() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, textureSSBO);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    unsigned int lightSSBO;
+    glGenBuffers(1, &lightSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, lightSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, lights.size() * sizeof(BVHPrimRef), lights.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, lightSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
     // Render Loop
     glm::vec3 lastCamPos = camera.Position;
     glm::vec3 lastCamFront = camera.Front;
@@ -287,6 +308,7 @@ int main() {
         compShader.setInt("maxDepth", maxDepth);
         compShader.setFloat("time", (float)glfwGetTime());
         compShader.setInt("accumFrame", accumFrame);
+        compShader.setInt("lightCount", (int)lights.size());
 
         glDispatchCompute((SCR_WIDTH + 7) / 8, (SCR_HEIGHT + 7) / 8, 1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
