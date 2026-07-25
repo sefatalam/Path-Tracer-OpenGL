@@ -3,6 +3,7 @@
 
 #include "prims.h"
 #include <algorithm>
+#include <iostream>
 #include <vector>
 
 enum PrimType
@@ -54,7 +55,7 @@ struct PrimitiveRef
         type(type), index(index), bounds(bounds), centroid(centroid) {}
 };
 
-std::vector<PrimitiveRef> buildRefs(const std::vector<Sphere>& spheres = {},
+inline std::vector<PrimitiveRef> buildRefs(const std::vector<Sphere>& spheres = {},
                                     const std::vector<Triangle>& triangles = {}, const std::vector<Quad>& quads = {})
 {
     std::vector<PrimitiveRef> refs = {};
@@ -231,5 +232,24 @@ struct BVHBuilder
         return static_cast<int>(nodes.size()) - 1;
     }
 };
+
+// Diagnostic: leaf counts and occupancy are the quickest read on whether SAH split sensibly.
+inline void printBVHStats(const BVHBuilder& builder)
+{
+    int leafCount = 0;
+    int maxLeafSize = 0;
+    long long leafPrimTotal = 0;
+    for (const BVHNode& n : builder.nodes) {
+        if (n.prim_type == LEAF) {
+            leafCount++;
+            leafPrimTotal += n.count;
+            maxLeafSize = std::max(maxLeafSize, n.count);
+        }
+    }
+    std::cout << "BVH stats: " << builder.nodes.size() << " nodes, "
+              << leafCount << " leaves, " << builder.primRefs.size() << " prim refs, "
+              << "avg leaf size " << (leafCount ? (double)leafPrimTotal / leafCount : 0.0)
+              << ", max leaf size " << maxLeafSize << "\n";
+}
 
 #endif

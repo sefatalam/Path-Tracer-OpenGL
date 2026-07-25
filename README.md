@@ -8,7 +8,10 @@ temporal accumulation while the camera is stationary.
 - Solid-color and image textures
 - Mesh loading via Assimp (FBX, etc.)
 - BVH acceleration structure built on the CPU, traced in the compute shader
+- Next-event estimation (direct light sampling) against sphere and quad emitters
+- ACES filmic tonemapping and sRGB output, with adjustable exposure
 - Free-fly camera with mouse look
+- Several built-in demo scenes, each carrying its own camera and look settings
 
 ## Requirements
 
@@ -55,8 +58,28 @@ Run from the project root (shaders, models, and textures are loaded via relative
 paths):
 
 ```sh
-./build/GLRT.exe
+./build/GLRT.exe            # opens the default scene
+./build/GLRT.exe cornell    # opens a named scene
 ```
+
+## Scenes
+
+Pass a scene name as the first argument; an unrecognised name prints the list.
+
+| Name       | Description                                                    |
+|------------|----------------------------------------------------------------|
+| `field`    | Sphere field over a lit plain (default). The hero shot.        |
+| `orrery`   | Concentric rings of chrome and glass, warm/cool side lighting.  |
+| `cornell`  | Cornell box with a glass sphere — shows colour bleeding.        |
+| `specular` | Roughness comparison row. A measuring tool, not a composition.  |
+
+Scenes are defined in `include/scenes.h`. Each one carries its own starting camera,
+exposure, bounce depth, and firefly clamp, so it opens on the viewpoint it was composed
+for. Object placement in `field` and `orrery` is procedural with a fixed seed, so the
+layout is identical on every run and screenshots stay reproducible across code changes.
+
+Note that rays which escape the scene return black — there is no sky — so every scene
+must light itself with emissive geometry.
 
 ## Controls
 
@@ -67,4 +90,9 @@ paths):
 | `Space`        | Move up             |
 | `Left Shift`   | Move down           |
 | Scroll wheel   | Zoom (FOV)          |
+| `E` / `Q`      | Brighten / darken exposure (printed to stdout) |
 | `Esc`          | Quit                |
+
+The image accumulates samples while the camera is still and resets whenever it moves, so
+let it settle before judging noise. Exposure is applied at present time, so adjusting it
+does not restart the accumulation.

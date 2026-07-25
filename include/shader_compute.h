@@ -56,6 +56,32 @@ public:
         // delete the shaders as they're linked into our program now and no longer necessary
         glDeleteShader(compute);
     }
+    // ------------------------------------------------------------------------
+    // The program handle is an owned GL resource, so this type is move-only: copying it would
+    // leave two owners of one handle, and the first destructor to run would invalidate the other.
+    ~ComputeShader()
+    {
+        if (ID) glDeleteProgram(ID);
+    }
+
+    ComputeShader(const ComputeShader&) = delete;
+    ComputeShader& operator=(const ComputeShader&) = delete;
+
+    ComputeShader(ComputeShader&& other) noexcept : ID(other.ID)
+    {
+        other.ID = 0;
+    }
+
+    ComputeShader& operator=(ComputeShader&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (ID) glDeleteProgram(ID);
+            ID = other.ID;
+            other.ID = 0;
+        }
+        return *this;
+    }
     // activate the shader
     // ------------------------------------------------------------------------
     void use() 

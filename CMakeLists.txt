@@ -9,6 +9,7 @@ set(CMAKE_CXX_COMPILER "C:/msys64/ucrt64/bin/g++.exe")
 
 add_executable(GLRT
     src/main.cpp
+    src/stb_image_impl.cpp
     src/glad.c
 )
 

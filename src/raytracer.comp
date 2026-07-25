@@ -17,6 +17,13 @@ uniform float time;
 uniform int accumFrame;
 uniform int lightCount;
 
+// Upper bound on the radiance a single sample may contribute. Rare high-energy paths -- a
+// caustic through glass that happens to land on a light -- otherwise leave isolated bright
+// pixels ("fireflies") that fade only as 1/N and so survive even long accumulations.
+// Clamping trades a little energy in genuinely bright caustics for a clean image; set it high
+// enough to leave directly-visible emitters untouched. Effectively disabled when very large.
+uniform float radianceClamp;
+
 ///////////////////////////////////////////////////
 // Constants
 
@@ -713,7 +720,9 @@ void main()
         r.origin = camPos;
         r.direction = lower_left + u * horizontal + v * vertical - camPos;
 
-        color_combination += ray_color(r);
+        // Clamped per sample rather than after averaging: a single outlier would otherwise
+        // survive the average and still show up as a firefly.
+        color_combination += min(ray_color(r), vec3(radianceClamp));
     }
     vec3 final_color = color_combination / float(samplesPerPixel);
 

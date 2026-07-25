@@ -70,6 +70,32 @@ public:
         glDeleteShader(fragment);
 
     }
+    // ------------------------------------------------------------------------
+    // The program handle is an owned GL resource, so this type is move-only: copying it would
+    // leave two owners of one handle, and the first destructor to run would invalidate the other.
+    ~Shader()
+    {
+        if (ID) glDeleteProgram(ID);
+    }
+
+    Shader(const Shader&) = delete;
+    Shader& operator=(const Shader&) = delete;
+
+    Shader(Shader&& other) noexcept : ID(other.ID)
+    {
+        other.ID = 0;
+    }
+
+    Shader& operator=(Shader&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (ID) glDeleteProgram(ID);
+            ID = other.ID;
+            other.ID = 0;
+        }
+        return *this;
+    }
     // activate the shader
     // ------------------------------------------------------------------------
     void use() const
