@@ -31,7 +31,7 @@ public:
     Renderer(const Scene& scene, int width, int height)
         : tracer("src/raytracer.comp"), present("src/quad.vs", "src/quad.fs"),
           fbWidth(width), fbHeight(height),
-          exposure(scene.exposure), maxDepth(scene.maxDepth), radianceClamp(scene.radianceClamp)
+          exposure(scene.exposure), radianceClamp(scene.radianceClamp)
     {
         std::vector<PrimitiveRef> refs = buildRefs(scene.spheres, scene.triangles, scene.quads);
         BVHBuilder builder;
@@ -121,6 +121,8 @@ public:
     void setExposure(float value) { exposure = value; }
     float getExposure() const { return exposure; }
 
+    int getMaxDepth() const { return maxDepth; }
+
 private:
     static constexpr int WORKGROUP_SIZE = 8;
     static constexpr int SAMPLES_PER_PIXEL = 2;
@@ -137,7 +139,7 @@ private:
     int lightCount = 0;
 
     float exposure = 1.0f;
-    int maxDepth = 2;
+    int maxDepth = 8;
     float radianceClamp = 1.0e9f;
 
     int accumFrame = 0;

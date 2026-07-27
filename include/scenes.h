@@ -61,7 +61,7 @@ inline Scene buildSphereFieldScene()
 {
     Scene scene;
     scene.exposure = 2.0f;
-    scene.maxDepth = 8;
+    // scene.maxDepth = 8;
     scene.radianceClamp = 30.0f;
     scene.camera = CameraSetup::lookingAt(glm::vec3(6.1f, 2.7f, 8.5f),
                                           glm::vec3(0.0f, 0.75f, -0.4f), 36.0f);
@@ -176,7 +176,7 @@ inline Scene buildOrreryScene()
 {
     Scene scene;
     scene.exposure = 1.5f;
-    scene.maxDepth = 8;
+    // scene.maxDepth = 8;
     scene.radianceClamp = 16.0f;
     scene.camera = CameraSetup::lookingAt(glm::vec3(3.0f, 5.5f, 13.5f),
                                           glm::vec3(0.0f, 0.4f, 0.0f), 36.0f);
@@ -253,7 +253,7 @@ inline Scene buildCornellBoxScene()
 {
     Scene scene;
     scene.exposure = 1.0f;
-    scene.maxDepth = 12;
+    // scene.maxDepth = 12;
     scene.radianceClamp = 18.0f;
     scene.camera = CameraSetup::lookingAt(glm::vec3(0.0f, 2.5f, 7.0f),
                                           glm::vec3(0.0f, 2.5f, -2.5f), 38.0f);
@@ -296,7 +296,7 @@ inline Scene buildSpecularTestScene()
 {
     Scene scene;
     scene.exposure = 2.5f;
-    scene.maxDepth = 5;
+    // scene.maxDepth = 5;
     scene.camera = CameraSetup::lookingAt(glm::vec3(2.6f, 1.5f, 3.4f),
                                           glm::vec3(0.0f, 0.05f, -1.0f), 45.0f);
 

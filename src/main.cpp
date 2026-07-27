@@ -45,7 +45,7 @@ int main(int argc, char** argv)
 
     Renderer renderer(scene, app.width(), app.height());
     std::printf("scene '%s' | exposure %.2f | maxDepth %d\n",
-                entry->name, scene.exposure, scene.maxDepth);
+                entry->name, scene.exposure, renderer.getMaxDepth());
     std::fflush(stdout);
 
     while (!app.shouldClose()) {

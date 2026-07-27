@@ -51,7 +51,7 @@ struct Scene
     CameraSetup camera;
 
     float exposure = 1.0f;
-    int maxDepth = 5;
+    // int maxDepth = 5;
 
     float radianceClamp = 1.0e9f;
 
