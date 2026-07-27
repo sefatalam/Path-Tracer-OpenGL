@@ -13,7 +13,6 @@
 #include "shader.h"
 #include "shader_compute.h"
 
-// SSBO binding points. These must match the `layout(binding = N)` declarations in raytracer.comp.
 namespace ssbo
 {
     constexpr GLuint MATERIALS = 1;
@@ -26,8 +25,6 @@ namespace ssbo
     constexpr GLuint LIGHTS    = 8;
 }
 
-// Uploads a scene to the GPU once, then path-traces it into an accumulation texture and
-// presents that texture to the default framebuffer. Owns every GL object it creates.
 class Renderer
 {
 public:
@@ -39,7 +36,7 @@ public:
         std::vector<PrimitiveRef> refs = buildRefs(scene.spheres, scene.triangles, scene.quads);
         BVHBuilder builder;
         builder.build(refs, 0, static_cast<int>(refs.size()));
-        printBVHStats(builder);
+        // printBVHStats(builder);
 
         std::vector<BVHPrimRef> lights = scene.collectLights();
         lightCount = static_cast<int>(lights.size());
@@ -67,8 +64,6 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    // Reallocates the accumulation texture. The traced image resolution follows the window,
-    // and the shader reads its dimensions from imageSize(), so nothing else needs updating.
     void resize(int width, int height)
     {
         if (width <= 0 || height <= 0 || (width == fbWidth && height == fbHeight)) {
@@ -80,16 +75,12 @@ public:
         createAccumTexture();
     }
 
-    // `time` seeds the per-frame RNG in the compute shader; any monotonically increasing
-    // seconds value works. Kept as a parameter so this class stays free of windowing code.
     void render(const Camera& camera, float time)
     {
         if (fbWidth <= 0 || fbHeight <= 0) {
-            return; // minimized
+            return;
         }
 
-        // Any change to the view invalidates the accumulated samples, including zoom,
-        // which changes vfov and therefore every primary ray.
         if (camera.Position != lastCamPos || camera.Front != lastCamFront || camera.Zoom != lastZoom) {
             accumFrame = 0;
             lastCamPos = camera.Position;
@@ -127,14 +118,10 @@ public:
         quad.draw();
     }
 
-    // Linear multiplier applied before tonemapping. ACES compresses the top end, so this is
-    // the knob to reach for when a scene reads too dark or too hot -- prefer it over
-    // rescaling every emitter.
     void setExposure(float value) { exposure = value; }
     float getExposure() const { return exposure; }
 
 private:
-    // Must match `layout(local_size_x/y)` in raytracer.comp.
     static constexpr int WORKGROUP_SIZE = 8;
     static constexpr int SAMPLES_PER_PIXEL = 2;
 
@@ -150,7 +137,7 @@ private:
     int lightCount = 0;
 
     float exposure = 1.0f;
-    int maxDepth = 5;
+    int maxDepth = 2;
     float radianceClamp = 1.0e9f;
 
     int accumFrame = 0;

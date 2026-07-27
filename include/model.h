@@ -157,8 +157,6 @@ inline bool loadModel(const std::string& path, std::vector<Triangle>& triangles,
 {
     Assimp::Importer importer;
 
-    // aiProcess_GlobalScale reads the file's own unit-scale metadata (FBX/Blender exports are
-    // commonly in centimeters) and normalizes it, so the model doesn't come in 100x too big.
     const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_JoinIdenticalVertices
                                                     | aiProcess_GenSmoothNormals | aiProcess_GlobalScale);
 

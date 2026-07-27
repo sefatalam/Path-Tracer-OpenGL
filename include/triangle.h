@@ -1,28 +1,22 @@
-  #ifndef TRIANGLE_H
-  #define TRIANGLE_H
-  #include "aabb.h"
+#ifndef TRIANGLE_H
+#define TRIANGLE_H
+#include "aabb.h"
 
 struct Triangle {
-    glm::vec3 v0;
-    float _pad0;
-    glm::vec3 v1;
-    float _pad1;
-    glm::vec3 v2;
-    int material_index;
-    glm::vec3 normal;   // flat face normal -- kept for e.g. front_face tests
-    float _pad2;
-    glm::vec3 n0;        // per-vertex normals, interpolated in the shader for smooth shading
-    float _pad3;
-    glm::vec3 n1;
-    float _pad4;
-    glm::vec3 n2;
-    float _pad5;
+    // Store flat normals (front/back face test) and vertex normals (smooth shading)
+    glm::vec3 v0;       float _pad0;
+    glm::vec3 v1;       float _pad1;
+    glm::vec3 v2;       int material_index;
+    glm::vec3 normal;   float _pad2;
+    glm::vec3 n0;       float _pad3;
+    glm::vec3 n1;       float _pad4;
+    glm::vec3 n2;       float _pad5;
     glm::vec2 uv0;
     glm::vec2 uv1;
     glm::vec2 uv2;
     glm::vec2 _pad6;
 
-    // Full constructor -- used by the mesh loader, which has real per-vertex normals.
+    // Explicit vertex normals -> smooth shading
     Triangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx,
             glm::vec3 n0, glm::vec3 n1, glm::vec3 n2,
             glm::vec2 uv0 = glm::vec2(0.0f), glm::vec2 uv1 = glm::vec2(1.0f, 0.0f), 
@@ -33,10 +27,8 @@ struct Triangle {
         {
             normal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
         }
-
-    // Convenience constructor for hand-placed triangles with no real vertex-normal data
-    // (e.g. the one in main.cpp). Collapses n0/n1/n2 to the flat face normal, so anything
-    // using this overload renders exactly as it did before -- flat shaded.
+    
+    // No explicit vertex normals -> flat shading
     Triangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx,
             glm::vec2 uv0 = glm::vec2(0.0f), glm::vec2 uv1 = glm::vec2(1.0f, 0.0f), 
             glm::vec2 uv2 = glm::vec2(0.0f, 1.0f))
@@ -55,6 +47,9 @@ inline AABB bboxTriangle(const Triangle& t)
     glm::vec3 mn = glm::min(t.v0, glm::min(t.v1, t.v2));
     glm::vec3 mx = glm::max(t.v0, glm::max(t.v1, t.v2));
 
+    // Padding in case a triangle lies flat on 2 axes
+    // Prevents SAH breaking down (where surface area = 0)
+    // Prevents false slab test results (where t_min == t_max for legitimate ray hits)
     const float pad = 1e-4f;
     for (int a = 0; a < 3; ++a) {
         if (mx[a] - mn[a] < pad) { mn[a] -= pad; mx[a] += pad; }

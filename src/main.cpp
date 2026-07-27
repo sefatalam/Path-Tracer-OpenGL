@@ -7,12 +7,10 @@
 const int WINDOW_WIDTH = 1920;
 const int WINDOW_HEIGHT = 1080;
 
-// Hold E / Q to brighten / darken. Exposure is multiplied rather than added so each step is
-// an equal perceptual stop, and the value is printed so a good setting can be copied into
-// the scene definition.
+// Hold E / Q to brighten / darken
 void updateExposure(const App& app, Renderer& renderer)
 {
-    const float rate = 1.5f; // stops per second
+    const float rate = 1.5f;
 
     float scale = 1.0f;
     if (app.isKeyDown(GLFW_KEY_E)) scale = 1.0f + rate * app.delta();
@@ -37,8 +35,6 @@ int main(int argc, char** argv)
         return -1;
     }
 
-    // Declared first so it outlives the Renderer: GL objects must be destroyed while the
-    // context is still current.
     App app(WINDOW_WIDTH, WINDOW_HEIGHT, "GLRT");
     if (!app.ok()) {
         return -1;

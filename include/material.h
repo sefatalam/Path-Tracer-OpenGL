@@ -15,11 +15,11 @@ enum MaterialType : int
 
 struct Material
 {
-    int texture_index;
-    float fuzz;
-    float ref_idx;
+    int texture_index; // All except dielectric
+    float fuzz; // Metal only
+    float ref_idx; // Dielectric only
     MaterialType type;
-    float emission_strength;
+    float emission_strength; // Light only
     float _pad0;
     float _pad1;
     float _pad2;
@@ -43,8 +43,6 @@ struct Material
         return Material(-1, 0.0f, ref_idx, DIELECTRIC);
     }
 
-    // texture_index selects the emitted color (solid or image); emission_strength scales it,
-    // so values above 1.0 are expected for anything meant to read as a bright light source.
     static Material DiffuseLight(int texture_index, float emission_strength = 1.0f)
     {
         return Material(texture_index, 0.0f, 0.0f, DIFFUSE_LIGHT, emission_strength);

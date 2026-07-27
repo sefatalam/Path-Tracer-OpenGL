@@ -212,7 +212,6 @@ layout(std430, binding = 7) buffer BVHPrimRefBuffer
     BVHPrimRef bvh_prim_refs[];
 };
 
-// Emissive spheres/quads gathered on the CPU side, for direct light sampling (NEE).
 layout(std430, binding = 8) buffer LightBuffer
 {
     BVHPrimRef lights[];
@@ -395,6 +394,7 @@ bool hit_quad(Quad quad, Ray r, float t_min, float t_max, out HitRecord rec)
     return true;
 }
 
+// AABB slab test
 bool hit_aabb(vec3 bmin, vec3 bmax, Ray r, vec3 inv_dir, float t_min, float t_max)
 {
     for (int axis = 0; axis < 3; ++axis) {
@@ -418,6 +418,7 @@ bool hit_aabb(vec3 bmin, vec3 bmax, Ray r, vec3 inv_dir, float t_min, float t_ma
     return true;
 }
 
+// Iterative BVH traversal (no recursion in GLSL)
 bool hit_bvh(Ray r, float t_min, float t_max, out HitRecord rec)
 {
     int stack[BVH_STACK_SIZE];
@@ -431,10 +432,12 @@ bool hit_bvh(Ray r, float t_min, float t_max, out HitRecord rec)
     while (idx > 0) {
         BVHNode node = bvh_nodes[stack[--idx]];
 
+        // No hit
         if (!hit_aabb(node.aabb_min, node.aabb_max, r, inv_dir, t_min, closest_so_far)) {
             continue;
         }
 
+        // Leaf hit -> perform hit test for all primitives -> store closest hit
         if (node.prim_type == LEAF) {
             for (int i = 0; i < node.count; ++i) {
                 BVHPrimRef ref = bvh_prim_refs[node.right + i];
@@ -456,6 +459,8 @@ bool hit_bvh(Ray r, float t_min, float t_max, out HitRecord rec)
                 }
             }
         }
+        // Node hit -> push both children (pop nearest first)
+        // If a ray moves in a negative direction, it reaches larger (right) coordinates first
         else if (idx < BVH_STACK_SIZE - 2) {
             if (inv_dir[node.axis] < 0.0) {
                 stack[idx++] = node.left;
@@ -711,6 +716,7 @@ void main()
     vec3 vertical = viewport_height * camUp;
     vec3 lower_left = camPos - horizontal / 2.0 - vertical / 2.0 + camFront;
 
+    // Anti-aliasing: Sample around a pixel and average color value
     vec3 color_combination = vec3(0.0f);
     for (int samples = 0; samples < samplesPerPixel; ++samples) {
         float u = (float(pixel.x) + rand_float()) / float(imgSize.x);
@@ -719,9 +725,10 @@ void main()
         Ray r;
         r.origin = camPos;
         r.direction = lower_left + u * horizontal + v * vertical - camPos;
+        //r.direction = normalize(r.direction)
 
-        // Clamped per sample rather than after averaging: a single outlier would otherwise
-        // survive the average and still show up as a firefly.
+        // Clamped per sample rather than after averaging -> an outlier would otherwise
+        // survive the average and still show up as a firefly
         color_combination += min(ray_color(r), vec3(radianceClamp));
     }
     vec3 final_color = color_combination / float(samplesPerPixel);

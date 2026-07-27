@@ -5,8 +5,6 @@
 
 #include <vector>
 
-// Allocates an RGBA32F texture with clamped edges and linear filtering. Used for the
-// accumulation image the compute shader writes into.
 inline GLuint createFloatTexture(int width, int height)
 {
     GLuint tex;
@@ -21,8 +19,6 @@ inline GLuint createFloatTexture(int width, int height)
     return tex;
 }
 
-// Uploads a contiguous vector as a shader storage buffer and binds it to `binding`.
-// T must be a std430-compatible layout matching the shader-side struct.
 template <typename T>
 GLuint uploadSSBO(GLuint binding, const std::vector<T>& data)
 {
@@ -36,14 +32,12 @@ GLuint uploadSSBO(GLuint binding, const std::vector<T>& data)
     return ssbo;
 }
 
-// Screen-filling triangle strip, used to present the traced image to the default framebuffer.
 class FullscreenQuad
 {
 public:
     FullscreenQuad()
     {
         const float vertices[] = {
-            // positions        // texture coords
             -1.0f,  1.0f, 0.0f, 0.0f, 1.0f,
             -1.0f, -1.0f, 0.0f, 0.0f, 0.0f,
              1.0f,  1.0f, 0.0f, 1.0f, 1.0f,

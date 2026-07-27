@@ -8,6 +8,7 @@ struct Sphere {
     float radius;
     int material_index;
     float _pad[3];
+    
     Sphere(const glm::vec3& c, float r, int matIdx)
         : center(c), radius(std::fmax(0.0f, r)), material_index(matIdx), _pad{0.0f, 0.0f, 0.0f} {}
 };

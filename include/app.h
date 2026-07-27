@@ -8,11 +8,6 @@
 
 #include "camera.h"
 
-// Owns the window, the GL context and all per-frame input state.
-//
-// GLFW callbacks are plain C function pointers, so they reach this object through the window's
-// user pointer rather than through globals. Construct this before anything that creates GL
-// objects, so those are destroyed while the context is still alive.
 class App
 {
 public:
@@ -38,7 +33,7 @@ public:
         }
 
         glfwMakeContextCurrent(window);
-        glfwSwapInterval(1); // cap to vsync so the compute shader doesn't peg the GPU at 100% uncapped
+        glfwSwapInterval(1);
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         glfwSetWindowUserPointer(window, this);
@@ -77,17 +72,12 @@ public:
     int width() const  { return fbWidth; }
     int height() const { return fbHeight; }
 
-    // Seconds since startup, sampled once at the top of the current frame.
     float time() const { return lastFrame; }
 
-    // Seconds elapsed during the previous frame, for rate-independent adjustments.
     float delta() const { return deltaTime; }
 
-    // Raw key state, so callers can bind their own controls without App having to know
-    // what they do.
     bool isKeyDown(int key) const { return glfwGetKey(window, key) == GLFW_PRESS; }
 
-    // True exactly once after the framebuffer changes size, so the caller can reallocate targets.
     bool consumeResize()
     {
         bool r = resized;
@@ -95,7 +85,6 @@ public:
         return r;
     }
 
-    // Advances the frame clock and applies keyboard input to the camera.
     void beginFrame()
     {
         float now = static_cast<float>(glfwGetTime());
@@ -171,7 +160,7 @@ private:
         }
 
         float xoffset = xpos - app.lastX;
-        float yoffset = app.lastY - ypos; // reversed since y-coordinates go from bottom to top
+        float yoffset = app.lastY - ypos;
 
         app.lastX = xpos;
         app.lastY = ypos;
@@ -184,9 +173,6 @@ private:
         from(w).camera.ProcessMouseScroll(static_cast<float>(yoffset));
     }
 
-    // With the cursor disabled, GLFW recentres it when the window gains focus. Without this the
-    // next cursor event reports the jump as real mouse movement and swings the camera, which
-    // makes a scene's authored viewpoint impossible to reproduce.
     static void onFocus(GLFWwindow* w, int focused)
     {
         if (focused) {

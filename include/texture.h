@@ -16,6 +16,9 @@ enum TextureType
     IMAGE
 };
 
+// Bindless Texture: Pass handles as sampler2D in SSBO for GPU to sample directly
+// Prevents OpenGL limitation of fixed number of texture units
+
 inline uint64_t loadBindlessTexture(const char* path);
 
 struct Texture

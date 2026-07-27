@@ -18,12 +18,12 @@ enum PrimType
 struct BVHNode
 {
     glm::vec3 aabb_min;
-    PrimType prim_type;    // NODE (internal) or LEAF
+    PrimType prim_type;
     glm::vec3 aabb_max;
-    int left;               // internal: left child index.  leaf: unused (-1)
-    int right;              // internal: right child index. leaf: start offset into primRefs
-    int axis;               // internal: split axis (0/1/2). leaf: unused
-    int count;               // leaf: number of prims.       internal: unused
+    int left; // NODE: index of left child, LEAF: -1 (no left child)
+    int right; // NODE: index of right child, LEAF: offset into primRefs
+    int axis; // NODE: split axis (0/1/2), LEAF: unused
+    int count; // NODE: 0, LEAF: number of primitives
     float _pad;
 
     BVHNode() :
@@ -35,19 +35,20 @@ struct BVHNode
 
 static_assert(sizeof(BVHNode) == 48, "BVHNode layout must match GLSL std430 BVHNode struct");
 
-// GPU-facing indirection entry: one per primitive inside a leaf's range.
+// Store PrimitiveRef information
 struct BVHPrimRef
 {
     int type;
-    int index;
+    int index; // Index in std::vector<PrimitiveRef>
 };
 
 static_assert(sizeof(BVHPrimRef) == 8, "BVHPrimRef layout must match GLSL std430 BVHPrimRef struct");
 
+// Store primitive information
 struct PrimitiveRef
 {
     PrimType type;
-    int index;
+    int index; // Index in std::vector<Sphere/Triangle/Quad>
     AABB bounds;
     glm::vec3 centroid;
 
@@ -55,6 +56,7 @@ struct PrimitiveRef
         type(type), index(index), bounds(bounds), centroid(centroid) {}
 };
 
+// Flatten all primitive arrays, keep bound and centroid informaiton
 inline std::vector<PrimitiveRef> buildRefs(const std::vector<Sphere>& spheres = {},
                                     const std::vector<Triangle>& triangles = {}, const std::vector<Quad>& quads = {})
 {
@@ -83,14 +85,17 @@ struct BVHBuilder
     std::vector<BVHNode> nodes;
     std::vector<BVHPrimRef> primRefs;
 
-    static constexpr int MIN_LEAF_SIZE = 2;    // below this, don't bother running SAH
-    static constexpr int MAX_LEAF_SIZE = 8;    // hard cap: force a split past this regardless of SAH verdict
+    // Mostly arbitrary values, could be improved empirically
+    static constexpr int MIN_LEAF_SIZE = 2;
+    static constexpr int MAX_LEAF_SIZE = 8;
     static constexpr int SAH_BINS = 16;
     static constexpr float C_TRAVERSAL = 4.0f;
     static constexpr float C_INTERSECT = 1.0f;
 
+    // Recursively build tree top-down
     int build(std::vector<PrimitiveRef>& refs, int start, int end)
     {
+        // Union AABBs to make BVH bounding box (Root = Universe (union all AABBs))
         BVHNode node;
         AABB bounds = refs[start].bounds;
         for (int i = start + 1; i < end; ++i) {
@@ -101,6 +106,7 @@ struct BVHBuilder
 
         int size = end - start;
 
+        // Find biggest centroid span distance along all axes (biggest distance between primitives)
         glm::vec3 cmin(FLT_MAX), cmax(-FLT_MAX);
         for (int i = start; i < end; ++i) {
             cmin = glm::min(cmin, refs[i].centroid);
@@ -109,7 +115,7 @@ struct BVHBuilder
         glm::vec3 span = cmax - cmin;
         float maxSpan = glm::max(span.x, glm::max(span.y, span.z));
 
-        // Too few prims to bother, or all centroids coincident (nothing to spatially split on).
+        // Early leaf: too few primitives or primitives share centroids (cannot be split)
         if (size <= MIN_LEAF_SIZE || maxSpan < 1e-8f) {
             return makeLeaf(node, refs, start, end);
         }
@@ -120,10 +126,12 @@ struct BVHBuilder
         int bestSplit = -1;
         float bestCost = FLT_MAX;
 
+        // Determine split positions (across all axes)
         for (int axis = 0; axis < 3; ++axis) {
             if (span[axis] < 1e-8f) continue;
 
-            struct Bin { AABB bounds = empty(); int count = 0; };
+            // Divide each axis' centroid range into SAH_BINS bins
+            struct Bin { AABB bounds = empty(); int count = 0; }; // Bin's AABB and number of primitives
             std::vector<Bin> bins(SAH_BINS);
 
             float binScale = SAH_BINS / span[axis];
@@ -132,12 +140,14 @@ struct BVHBuilder
                 return std::clamp(b, 0, SAH_BINS - 1);
             };
 
+            // Place primitive into bin and update bounds and count
             for (int i = start; i < end; ++i) {
                 int b = binOf(refs[i].centroid[axis]);
                 bins[b].bounds = AABB(bins[b].bounds, refs[i].bounds);
                 bins[b].count++;
             }
 
+            // Cumulative count + union of bins 0 to b
             std::vector<AABB> leftBounds(SAH_BINS, empty());
             std::vector<int> leftCount(SAH_BINS, 0);
             AABB acc = empty();
@@ -149,6 +159,7 @@ struct BVHBuilder
                 leftCount[b] = accCount;
             }
 
+            // Cumulative count + union of bins b to SAH_BINS
             std::vector<AABB> rightBounds(SAH_BINS, empty());
             std::vector<int> rightCount(SAH_BINS, 0);
             acc = empty();
@@ -160,11 +171,14 @@ struct BVHBuilder
                 rightCount[b] = accCount;
             }
 
-            // Evaluate the split between bin b and bin b+1.
+            // Evaluate optimal cost according to 
+            // cost = C_traversal + (SA(left)/SA(parent)) * N_left * C_intersect + (SA(right)/SA(parent)) * N_right * C_intersect
             for (int b = 0; b < SAH_BINS - 1; ++b) {
                 int nLeft = leftCount[b];
                 int nRight = rightCount[b + 1];
-                if (nLeft == 0 || nRight == 0) continue;
+                if (nLeft == 0 || nRight == 0) {
+                    continue;
+                }
 
                 float cost = C_TRAVERSAL +
                     (surfaceArea(leftBounds[b]) * nLeft + surfaceArea(rightBounds[b + 1]) * nRight)
@@ -178,14 +192,17 @@ struct BVHBuilder
             }
         }
 
+        // Compare optimal split cost to cost of making a leaf instead
         float leafCost = C_INTERSECT * static_cast<float>(size);
+
+        // Must split regardless of cost if too many primitives
         bool forceSplit = size > MAX_LEAF_SIZE;
 
         if (bestAxis == -1 || (bestCost >= leafCost && !forceSplit)) {
             return makeLeaf(node, refs, start, end);
         }
 
-        // Partition refs[start,end) by which side of bestSplit their centroid bin falls on.
+        // Rearrange refs such that everything on left side comes before right side
         float binScale = SAH_BINS / span[bestAxis];
         auto belongsLeft = [&](const PrimitiveRef& r) {
             int b = std::clamp(static_cast<int>((r.centroid[bestAxis] - cmin[bestAxis]) * binScale), 0, SAH_BINS - 1);
@@ -195,7 +212,7 @@ struct BVHBuilder
         auto midIt = std::partition(refs.begin() + start, refs.begin() + end, belongsLeft);
         int mid = static_cast<int>(midIt - refs.begin());
 
-        // Degenerate partition safety net (shouldn't trigger given nLeft/nRight > 0 above, but guards the forceSplit path too).
+        // Fallback median split if everything lands on one side
         if (mid == start || mid == end) {
             mid = start + size / 2;
             std::nth_element(refs.begin() + start, refs.begin() + mid, refs.begin() + end,
@@ -204,11 +221,13 @@ struct BVHBuilder
                 });
         }
 
+        // Create node
         node.prim_type = NODE;
         node.axis = bestAxis;
         int nodeIdx = static_cast<int>(nodes.size());
         nodes.push_back(node);
 
+        // Backfill left and right children after recursion
         int leftIdx = build(refs, start, mid);
         int rightIdx = build(refs, mid, end);
         nodes[nodeIdx].left = leftIdx;
@@ -217,6 +236,7 @@ struct BVHBuilder
         return nodeIdx;
     }
 
+    // Create leaf
     int makeLeaf(BVHNode node, std::vector<PrimitiveRef>& refs, int start, int end)
     {
         node.prim_type = LEAF;
@@ -233,23 +253,22 @@ struct BVHBuilder
     }
 };
 
-// Diagnostic: leaf counts and occupancy are the quickest read on whether SAH split sensibly.
-inline void printBVHStats(const BVHBuilder& builder)
-{
-    int leafCount = 0;
-    int maxLeafSize = 0;
-    long long leafPrimTotal = 0;
-    for (const BVHNode& n : builder.nodes) {
-        if (n.prim_type == LEAF) {
-            leafCount++;
-            leafPrimTotal += n.count;
-            maxLeafSize = std::max(maxLeafSize, n.count);
-        }
-    }
-    std::cout << "BVH stats: " << builder.nodes.size() << " nodes, "
-              << leafCount << " leaves, " << builder.primRefs.size() << " prim refs, "
-              << "avg leaf size " << (leafCount ? (double)leafPrimTotal / leafCount : 0.0)
-              << ", max leaf size " << maxLeafSize << "\n";
-}
+// inline void printBVHStats(const BVHBuilder& builder)
+// {
+//     int leafCount = 0;
+//     int maxLeafSize = 0;
+//     long long leafPrimTotal = 0;
+//     for (const BVHNode& n : builder.nodes) {
+//         if (n.prim_type == LEAF) {
+//             leafCount++;
+//             leafPrimTotal += n.count;
+//             maxLeafSize = std::max(maxLeafSize, n.count);
+//         }
+//     }
+//     std::cout << "BVH stats: " << builder.nodes.size() << " nodes, "
+//               << leafCount << " leaves, " << builder.primRefs.size() << " prim refs, "
+//               << "avg leaf size " << (leafCount ? (double)leafPrimTotal / leafCount : 0.0)
+//               << ", max leaf size " << maxLeafSize << "\n";
+// }
 
 #endif
